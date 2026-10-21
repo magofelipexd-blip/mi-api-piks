@@ -1,0 +1,64 @@
+# Producción (servidor en internet). Uso:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Las variables las genera deploy/setup.sh en .env.prod.
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pronosticos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+      POSTGRES_DB: pronosticos
+    # sin "ports": la base solo es accesible desde dentro de la red de Docker
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pronosticos -d pronosticos"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    environment: &app_env
+      DATABASE_URL: postgresql://pronosticos:${POSTGRES_PASSWORD}@db:5432/pronosticos
+      ADMIN_KEY: ${ADMIN_KEY:?falta ADMIN_KEY}
+      ALLOW_DEV_USER_HEADER: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: ./api
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *app_env
+      WORKER_INTERVAL_SECONDS: "600"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # HTTPS automático (Let's Encrypt) y descarga del APK en /descargar/
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?falta DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./release:/srv/release:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

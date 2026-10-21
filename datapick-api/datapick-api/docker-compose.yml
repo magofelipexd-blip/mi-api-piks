@@ -1,0 +1,48 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: pronosticos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pronosticos
+      POSTGRES_PASSWORD: pronosticos_dev
+      POSTGRES_DB: pronosticos
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pronosticos -d pronosticos"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ./api
+    container_name: pronosticos-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://pronosticos:pronosticos_dev@db:5432/pronosticos
+      ADMIN_KEY: dev-admin-key
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Importa calendario, resultados y cuotas reales y ejecuta el motor cada 10 minutos
+  worker:
+    build: ./api
+    container_name: pronosticos-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql://pronosticos:pronosticos_dev@db:5432/pronosticos
+      WORKER_INTERVAL_SECONDS: "600"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
